@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")"
+build="$PWD/.build"
+mkdir -p "$build/module-cache"
+xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra -c Sources/Probe.c -o "$build/Probe.test.o"
+xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra -c Sources/TaskProbe.c -o "$build/TaskProbe.test.o"
+xcrun swiftc -target arm64-apple-macos14 -module-cache-path "$build/module-cache" -import-objc-header Sources/Probe.h Sources/Monitor.swift Sources/ProcessTasks.swift Sources/Diagnosis.swift Sources/Advice.swift Sources/AdjustmentCheck.swift Sources/ApplicationActions.swift Tests/ApplicationActionsTests.swift Tests/ProcessTaskTests.swift Tests/GentleAdviceTests.swift Tests/DiagnosisTests.swift "$build/Probe.test.o" "$build/TaskProbe.test.o" -framework IOKit -o "$build/DiagnosisTests"
+"$build/DiagnosisTests"
+xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra Tests/ProbeTests.c "$build/Probe.test.o" -framework CoreFoundation -framework IOKit -o "$build/ProbeTests"
+"$build/ProbeTests"
+xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra -c Sources/PrivacyProbe.c -o "$build/PrivacyProbe.test.o"
+xcrun swiftc -target arm64-apple-macos14 -module-cache-path "$build/module-cache" -import-objc-header Sources/Probe.h Sources/Privacy.swift Tests/PrivacyTests.swift "$build/PrivacyProbe.test.o" "$build/Probe.test.o" -framework IOKit -framework CoreAudio -framework CoreMediaIO -o "$build/PrivacyTests"
+"$build/PrivacyTests"
+xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra Tests/TaskProbeTests.c "$build/TaskProbe.test.o" -o "$build/TaskProbeTests"
+"$build/TaskProbeTests"
