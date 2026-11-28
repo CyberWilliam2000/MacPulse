@@ -4,6 +4,23 @@ struct ProcessObservation {
     let date: Date
     let reading: ProcessReading
 }
+
+struct StableApplicationOrder {
+    private(set) var ids: [String] = []
+    mutating func reconcile(_ next: [String]) {
+        let live = Set(next)
+        ids.removeAll { !live.contains($0) }
+        let known = Set(ids)
+        ids.append(contentsOf: next.filter { !known.contains($0) })
+    }
+    func arranged(_ apps: [Load]) -> [Load] {
+        let positions = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($0.element, $0.offset) })
+        return apps.sorted {
+            let a = positions[$0.id] ?? Int.max, b = positions[$1.id] ?? Int.max
+            return a == b ? ($0.memory == $1.memory ? $0.id < $1.id : $0.memory > $1.memory) : a < b
+        }
+    }
+}
 struct ProcessTask {
     let key: String
     let title: String

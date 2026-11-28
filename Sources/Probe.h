@@ -26,6 +26,7 @@ SystemProbe pulse_system(void);
 int pulse_process_capacity(void);
 int pulse_processes(ProcessProbe *out, int capacity, int *listed);
 int pulse_process_path(int pid, char *out, int length);
+uint64_t pulse_process_birth(int pid);
 TemperatureProbe pulse_temperature(void);
 
 typedef struct {

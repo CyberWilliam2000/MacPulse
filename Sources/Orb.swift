@@ -1,22 +1,24 @@
 import AppKit
 import SwiftUI
+import Combine
+
+final class OrbMotion: ObservableObject {
+    @Published var active = false
+}
 
 struct OrbView: View {
     @ObservedObject var monitor: Monitor
+    @ObservedObject var motion: OrbMotion
     var open: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let side: CGFloat = 132
-
+    private let ink = Color(red: 0.12, green: 0.30, blue: 0.23)
+    private let warm = Color(red: 0.65, green: 0.40, blue: 0.14)
     private var latest: Sample? { monitor.samples.last }
     private var pressure: [Metric] { Diagnosis.currentPressure(monitor.samples) }
     private var alerting: Bool { !pressure.isEmpty }
-    private var glow: Color {
-        alerting ? Color(red: 1, green: 0.74, blue: 0.40) : Color(red: 0.89, green: 0.96, blue: 0.83)
-    }
-    private var readingColor: Color {
-        alerting ? .white : Color(red: 0.08, green: 0.19, blue: 0.12)
-    }
+    private var critical: Bool { latest?.pressure == 4 || (latest?.thermal ?? 0) >= 2 }
     private var status: String {
         guard latest != nil else { return "正在采样" }
         guard alerting else { return "暂无压力信号" }
@@ -35,20 +37,26 @@ struct OrbView: View {
                 reading(.memory, width: 48).position(x: 66, y: 104)
                 reading(.heat, width: 40).position(x: 31, y: 66)
                 reading(.disk, width: 46).position(x: 99, y: 66)
-                Image(systemName: alerting ? "exclamationmark" : "waveform.path.ecg")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(alerting ? glow : readingColor)
-                    .frame(width: 23, height: 23)
-                    .background(.black.opacity(alerting ? 0.20 : 0.10), in: Circle())
-                    .overlay { Circle().strokeBorder(glow.opacity(0.31)) }
-                    .position(x: 66, y: 66)
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "drop.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color(red: 0.32, green: 0.61, blue: 0.47))
+                        .frame(width: 23, height: 23)
+                        .background(.white.opacity(0.55), in: Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.80), lineWidth: 0.8))
+                    if alerting {
+                        Circle().fill(Color(red: 0.88, green: 0.65, blue: 0.30))
+                            .frame(width: critical ? 6 : 4, height: critical ? 6 : 4)
+                            .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 0.6))
+                            .offset(x: 0, y: 0)
+                    }
+                }.position(x: 66, y: 66)
             }
             .frame(width: Self.side, height: Self.side)
             .contentShape(Circle().inset(by: 5))
         }
         .buttonStyle(.plain)
-        .preferredColorScheme(.dark)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: alerting)
+        .preferredColorScheme(.light)
         .accessibilityLabel("Mac 脉搏，展开看板")
         .accessibilityValue(accessibleReadings)
         .help(status + " · 点击展开，拖动移动")
@@ -61,91 +69,148 @@ struct OrbView: View {
     }
 
     private var surface: some View {
-        let colors = alerting ? [
-            Color(red: 0.64, green: 0.30, blue: 0.035),
-            Color(red: 0.29, green: 0.11, blue: 0.026)
-        ] : [
-            Color(red: 0.85, green: 0.92, blue: 0.73),
-            Color(red: 0.64, green: 0.77, blue: 0.51),
-            Color(red: 0.38, green: 0.55, blue: 0.42)
-        ]
-        return Circle()
-            .fill(RadialGradient(colors: colors, center: UnitPoint(x: 0.35, y: 0.15),
-                                 startRadius: 3, endRadius: 126))
+        Circle()
+            .fill(LinearGradient(colors: [
+                Color(red: 0.97, green: 0.99, blue: 0.91),
+                Color(red: 0.88, green: 0.96, blue: 0.79),
+                Color(red: 0.74, green: 0.89, blue: 0.75)
+            ], startPoint: .topLeading, endPoint: .bottomTrailing))
             .overlay {
-                if alerting {
-                    Circle().fill(RadialGradient(colors: [glow.opacity(0.24), .clear],
-                                                 center: UnitPoint(x: 0.67, y: 0.99),
-                                                 startRadius: 0, endRadius: 60))
-                } else {
-                    Circle().fill(EllipticalGradient(
-                        colors: [Color(red: 0.79, green: 0.92, blue: 0.84).opacity(0.64), .clear],
-                        center: UnitPoint(x: 0.68, y: 0.87), endRadiusFraction: 0.52
-                    ))
-                    willowHighlights
-                }
+                MintWater(paused: reduceMotion || !motion.active)
+                    .clipShape(Circle())
             }
             .overlay {
-                Circle().strokeBorder(
-                    LinearGradient(colors: [.white.opacity(alerting ? 0.62 : 0.50), glow.opacity(0.40),
-                                            .black.opacity(alerting ? 0.36 : 0.17), glow.opacity(0.58)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1.25
-                )
+                Circle().fill(RadialGradient(colors: [.white.opacity(0.62), .clear],
+                                             center: UnitPoint(x: 0.25, y: 0.12), startRadius: 0, endRadius: 78))
             }
             .overlay {
-                Circle().inset(by: 3).trim(from: 0.47, to: 0.71)
-                    .stroke(LinearGradient(colors: [.clear, .white.opacity(alerting ? 0.42 : 0.27), .clear],
-                                           startPoint: .leading, endPoint: .topTrailing), lineWidth: 1.5)
-                    .rotationEffect(.degrees(11))
+                Circle().strokeBorder(LinearGradient(colors: [.white.opacity(0.95),
+                    Color(red: 0.61, green: 0.80, blue: 0.65).opacity(0.40), .white.opacity(0.75)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+            }
+            .overlay {
+                Circle().inset(by: 4).trim(from: 0.53, to: 0.72)
+                    .stroke(.white.opacity(0.70), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                    .rotationEffect(.degrees(9))
             }
             .frame(width: 120, height: 120)
-            .shadow(color: .black.opacity(0.38), radius: 3, x: 0, y: 2)
+            .shadow(color: Color(red: 0.24, green: 0.45, blue: 0.32).opacity(0.12), radius: 3, x: 0, y: 2)
             .accessibilityHidden(true)
-    }
-
-    private var willowHighlights: some View {
-        Canvas { context, size in
-            let flecks: [(x: CGFloat, y: CGFloat, radius: CGFloat)] = [
-                (0.23, 0.28, 1.3), (0.31, 0.34, 0.8), (0.77, 0.32, 1.0), (0.24, 0.73, 0.9)
-            ]
-            for fleck in flecks {
-                let r = fleck.radius
-                let rect = CGRect(x: fleck.x * size.width - r, y: fleck.y * size.height - r,
-                                  width: 2 * r, height: 2 * r)
-                context.fill(Path(ellipseIn: rect), with: .color(.white.opacity(0.53)))
-            }
-        }
     }
 
     private func reading(_ metric: Metric, width: CGFloat) -> some View {
         VStack(spacing: 2) {
-            Text(metric.title)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(readingColor.opacity(alerting ? 0.82 : 0.88))
+            Text(metric.title).font(.system(size: 9, weight: .medium)).foregroundStyle(ink.opacity(0.78))
             Text(shortValue(metric))
                 .font(.system(size: metric == .disk ? 10 : 13, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
-                .foregroundStyle(readingColor)
-        }
-        .frame(width: width)
+                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.68)
+                .foregroundStyle(pressure.contains(metric) ? warm : ink)
+        }.frame(width: width)
     }
 
     private func shortValue(_ metric: Metric) -> String {
         guard let latest else { return "—" }
         switch metric {
         case .cpu: return percent(latest.cpu)
-        case .memory:
-            return latest.pressure == nil ? "—" : metric.value(latest)
-        case .heat:
-            return latest.temperature.map { String(format: "%.0f°", $0) } ?? latest.thermalLabel
+        case .memory: return latest.pressure == nil ? "—" : metric.value(latest)
+        case .heat: return latest.temperature.map { String(format: "%.0f°", $0) } ?? latest.thermalLabel
         case .disk:
             guard let bytes = latest.diskTotal else { return "—" }
             if bytes == 0 { return "0 MB/s" }
             if bytes < miB { return String(format: "%.0f KB/s", max(1, bytes / 1024)) }
             return String(format: bytes < 10 * miB ? "%.1f MB/s" : "%.0f MB/s", bytes / miB)
+        }
+    }
+}
+
+private struct MintWater: NSViewRepresentable {
+    let paused: Bool
+    func makeNSView(context: Context) -> MintWaterLayerView { MintWaterLayerView() }
+    func updateNSView(_ view: MintWaterLayerView, context: Context) { view.setFlowing(!paused) }
+}
+
+private final class MintWaterLayerView: NSView {
+    private let waves = [CALayer(), CALayer()]
+    private let fills = [CAShapeLayer(), CAShapeLayer()]
+    private let ridges = [CAShapeLayer(), CAShapeLayer()]
+    private var flowing = false
+    private var drawnSize = CGSize.zero
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.isGeometryFlipped = true
+        for i in 0..<2 {
+            fills[i].fillColor = i == 0
+                ? NSColor(srgbRed: 0.36, green: 0.73, blue: 0.58, alpha: 0.21).cgColor
+                : NSColor(srgbRed: 0.35, green: 0.77, blue: 0.73, alpha: 0.23).cgColor
+            ridges[i].fillColor = nil
+            ridges[i].strokeColor = NSColor.white.withAlphaComponent(i == 0 ? 0.48 : 0.36).cgColor
+            ridges[i].lineWidth = 0.85
+            waves[i].addSublayer(fills[i])
+            waves[i].addSublayer(ridges[i])
+            layer?.addSublayer(waves[i])
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setFlowing(_ active: Bool) {
+        guard flowing != active else { return }
+        flowing = active
+        if active { installAnimations() }
+        else { waves.forEach { $0.removeAnimation(forKey: "water-flow") } }
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { waves.forEach { $0.removeAnimation(forKey: "water-flow") } }
+        else { installAnimations() }
+    }
+    override func layout() {
+        super.layout()
+        guard bounds.width > 0, bounds.height > 0, drawnSize != bounds.size else {
+            installAnimations(); return
+        }
+        drawnSize = bounds.size
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for i in 0..<2 {
+            waves[i].removeAnimation(forKey: "water-flow")
+            waves[i].frame = CGRect(x: 0, y: 0, width: bounds.width * 3, height: bounds.height)
+            fills[i].frame = waves[i].bounds
+            ridges[i].frame = waves[i].bounds
+            let crest = CGMutablePath()
+            let level: CGFloat = i == 0 ? 0.54 : 0.68
+            let amplitude: CGFloat = i == 0 ? 4.5 : 3.3
+            for step in 0...120 {
+                let x = CGFloat(step) / 120 * bounds.width * 3
+                let angle = Double(x / bounds.width) * 2 * Double.pi + (i == 0 ? 0 : 1.7)
+                let y = bounds.height * level + CGFloat(sin(angle)) * amplitude
+                if step == 0 { crest.move(to: CGPoint(x: x, y: y)) }
+                else { crest.addLine(to: CGPoint(x: x, y: y)) }
+            }
+            ridges[i].path = crest
+            let fill = crest.mutableCopy()!
+            fill.addLine(to: CGPoint(x: bounds.width * 3, y: bounds.height))
+            fill.addLine(to: CGPoint(x: 0, y: bounds.height))
+            fill.closeSubpath()
+            fills[i].path = fill
+        }
+        CATransaction.commit()
+        installAnimations()
+    }
+    private func installAnimations() {
+        guard flowing, window != nil, bounds.width > 0 else { return }
+        for i in 0..<2 where waves[i].animation(forKey: "water-flow") == nil {
+            let animation = CABasicAnimation(keyPath: "transform.translation.x")
+            animation.fromValue = i == 0 ? 0 : -bounds.width
+            animation.toValue = i == 0 ? -bounds.width : 0
+            animation.duration = i == 0 ? 6 : 8
+            animation.repeatCount = .infinity
+            animation.timingFunction = CAMediaTimingFunction(name: .linear)
+            waves[i].add(animation, forKey: "water-flow")
         }
     }
 }

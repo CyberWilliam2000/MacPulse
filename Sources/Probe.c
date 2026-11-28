@@ -88,6 +88,11 @@ int pulse_process_capacity(void) {
     return n > 0 ? n + 128 : 512;
 }
 
+uint64_t pulse_process_birth(int pid) {
+    struct rusage_info_v4 usage = {0};
+    return proc_pid_rusage(pid, RUSAGE_INFO_V4, (rusage_info_t *)&usage) == 0 ? usage.ri_proc_start_abstime : 0;
+}
+
 int pulse_processes(ProcessProbe *out, int capacity, int *listed) {
     *listed = 0;
     pid_t *pids = calloc((size_t)capacity, sizeof(pid_t));

@@ -109,12 +109,13 @@ struct PanelRoot: View {
     @ObservedObject var monitor: Monitor
     @ObservedObject var privacy: PrivacyMonitor
     @ObservedObject var ui: Interface
+    @ObservedObject var updates: SoftwareUpdate
     @State private var query = ""
     @FocusState private var typing: Bool
     @State private var confirmRemove = false
     @State private var processSelection: ProcessSelection?
     @StateObject private var applicationActions = ApplicationActions()
-    @StateObject private var adjustmentCheck = AdjustmentCheck()
+    @State private var applicationMetric: Metric = .memory
 
     private var latest: Sample? { monitor.samples.last }
     private var selected: Incident? { monitor.incidents.first { $0.id == ui.marked } ?? monitor.incidents.first }
@@ -123,6 +124,16 @@ struct PanelRoot: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let release = updates.state.release {
+                HStack(spacing: 8) {
+                    Label("脉搏 \(release.version.description) 可以更新", systemImage: "arrow.down.circle.fill")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(accent)
+                    Spacer()
+                    Link("查看更新", destination: release.url).buttonStyle(OrangeButton())
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .background(accent.opacity(0.07))
+            }
             navigation
             Rectangle().fill(line).frame(height: 1)
             Group {
@@ -145,7 +156,6 @@ struct PanelRoot: View {
         .sheet(item: $processSelection) { selection in
             ProcessInspector(monitor: monitor, privacy: privacy, selection: selection)
         }
-        .onReceive(monitor.$samples) { adjustmentCheck.accept($0) }
     }
 
     private var header: some View {
@@ -238,75 +248,63 @@ struct PanelRoot: View {
             } : nil
         } ?? []
         let advice = Advice.suggestions(monitor.samples, processes: monitor.processesByGroup, microphones: microphones)
-        let fresh = latest.map { Date().timeIntervalSince($0.id) < 12 } ?? false
+        let apps = Advice.applications(monitor.samples, metric: applicationMetric)
+        let fresh = latest.map { Date().timeIntervalSince($0.id) < 8 } ?? false
         return ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 9) {
-                    Text(fresh ? Advice.headline(monitor.samples) : "正在读取当前任务")
-                        .font(.system(size: 21, weight: .semibold))
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("看占用，直接处理").font(.system(size: 22, weight: .semibold))
                     if let latest, fresh {
-                        Text("内存\(latest.pressureLabel) · 交换 \(rate(latest.swapTotal)) · 热压力\(latest.thermalLabel)")
+                        Text("内存\(Metric.memory.value(latest)) · 交换 \(rate(latest.swapTotal)) · 热压力\(latest.thermalLabel)")
                             .font(.system(size: 11)).foregroundStyle(muted)
-                    }
+                    } else { Text("正在刷新当前应用…").font(.system(size: 11)).foregroundStyle(muted) }
                     HStack(spacing: 8) {
-                        Button("腾出内存") { ui.chatIncident = nil; ui.answer("内存优化建议，保留常用软件，先调整哪些小任务？", monitor) }
-                            .buttonStyle(QuietButton(tint: accent))
-                        Button("减少发热") { ui.chatIncident = nil; ui.answer("发热优化建议，先暂停哪个任务？", monitor) }
-                            .buttonStyle(QuietButton(tint: accent))
-                        Spacer()
+                        Button("找高 CPU 任务") { processSelection = ProcessSelection(metric: .cpu) }.buttonStyle(QuietButton())
+                        Button("找读写任务") { processSelection = ProcessSelection(metric: .disk) }.buttonStyle(QuietButton())
+                        Button("音视频") { ui.page = .privacy }.buttonStyle(QuietButton())
+                        Spacer(minLength: 0)
                     }
-                }.padding(14).block()
-
+                }.padding(.horizontal, 3).padding(.top, 3)
                 if let message = applicationActions.message {
-                    Text(message)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(accent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12).block()
-                }
-                if let message = adjustmentCheck.message {
-                    Text(message).font(.system(size: 12)).foregroundStyle(muted)
+                    Text(message).font(.system(size: 12, weight: .medium)).foregroundStyle(accent)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(12).block()
                 }
-                if fresh && !advice.isEmpty {
-                    ForEach(advice) { item in
-                        OptimizationCard(
-                            item: item,
-                            quitting: applicationActions.pendingIDs.contains(item.id),
-                            comparing: adjustmentCheck.current?.app.id == item.id,
-                            inspect: {
-                            processSelection = ProcessSelection(group: item.application, metric: item.metric)
-                            },
-                            open: {
-                                let fresh = latest.map { Date().timeIntervalSince($0.id) < 12 } ?? false
-                                applicationActions.open(item.application, path: monitor.applicationPaths[item.id], fresh: fresh)
-                            },
-                            compare: { adjustmentCheck.begin(item.application, samples: monitor.samples) },
-                            quit: {
-                                let fresh = latest.map { Date().timeIntervalSince($0.id) < 12 } ?? false
-                                applicationActions.quit(item.application, path: monitor.applicationPaths[item.id], fresh: fresh)
-                            }
-                        )
+                HStack {
+                    Text("应用占用").font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    ForEach([Metric.memory, .cpu, .disk]) { metric in
+                        Button(metric.title) { applicationMetric = metric }
+                            .font(.system(size: 11, weight: applicationMetric == metric ? .semibold : .regular))
+                            .foregroundStyle(applicationMetric == metric ? accent : muted)
+                            .buttonStyle(.plain).padding(.horizontal, 4)
                     }
-                    Text("内存数字是当前占用估计。你可以先调整一项，再比较卡顿、交换速率与热压力的变化。")
-                        .font(.system(size: 10)).foregroundStyle(muted).lineSpacing(3)
+                }.padding(.horizontal, 3)
+                Text("强制关闭立即执行，未保存内容可能丢失。")
+                    .font(.system(size: 10)).foregroundStyle(muted).padding(.horizontal, 3)
+                if !apps.isEmpty {
+                    ApplicationList(applications: apps, paths: monitor.applicationPaths, advice: advice,
+                                    pending: applicationActions.pendingIDs, fresh: fresh,
+                                    inspect: { processSelection = ProcessSelection(group: $0, metric: applicationMetric) },
+                                    open: { applicationActions.open($0, path: monitor.applicationPaths[$0.id], fresh: isApplicationSampleFresh) },
+                                    quit: { applicationActions.quit($0, path: monitor.applicationPaths[$0.id], fresh: isApplicationSampleFresh) },
+                                    forceQuit: { applicationActions.forceQuit($0, path: monitor.applicationPaths[$0.id], fresh: isApplicationSampleFresh) })
+                        .id(applicationMetric)
                 } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(fresh ? "暂时没有明确需要调整的大任务" : "等下一次采样后生成建议")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text(fresh ? "卡顿刚发生时，点「刚刚卡了」保存当时占用。也可以查看全部进程。" :
-                                "建议会结合当前占用、持续负载和内存压力更新。")
-                            .font(.system(size: 12)).foregroundStyle(muted)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(14).block()
+                    Text(fresh ? "暂无可读取的应用；可查看全部进程。" : "正在读取应用占用…")
+                        .font(.system(size: 12)).foregroundStyle(muted).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16).block()
                 }
                 HStack {
-                    Button("全部进程") { processSelection = ProcessSelection(metric: .memory) }
-                        .buttonStyle(QuietButton(tint: accent))
+                    Button("全部进程") { processSelection = ProcessSelection(metric: applicationMetric) }.buttonStyle(QuietButton())
                     Spacer()
-                    Button("查看性能走势") { ui.page = .metrics }.buttonStyle(QuietButton())
+                    Button("性能走势") { ui.page = .metrics }.buttonStyle(QuietButton())
                 }
             }.padding(17)
         }
+    }
+
+    private var isApplicationSampleFresh: Bool {
+        latest.map { Date().timeIntervalSince($0.id) >= 0 && Date().timeIntervalSince($0.id) < 8 } ?? false
     }
 
     private var currentFinding: some View {
@@ -642,66 +640,6 @@ struct PanelRoot: View {
     }
 }
 
-private struct OptimizationCard: View {
-    let item: Optimization
-    var quitting: Bool
-    var comparing: Bool
-    var inspect: () -> Void
-    var open: () -> Void
-    var compare: () -> Void
-    var quit: () -> Void
-
-    private var category: String {
-        switch item.metric {
-        case .memory: return "释放内存"
-        case .disk: return "减少读写"
-        case .cpu, .heat: return "减轻计算负载"
-        }
-    }
-
-    private var usage: String {
-        switch item.metric {
-        case .memory: return "当前占用 " + size(item.application.memory)
-        case .disk: return rate(item.application.read + item.application.write)
-        case .cpu, .heat: return "当前 CPU " + percent(item.application.cpu)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label(category, systemImage: item.metric.icon)
-                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(item.metric.tint)
-                Spacer()
-                Text(usage).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(muted)
-            }
-            Text(item.title).font(.system(size: 16, weight: .semibold))
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(Array(item.steps.enumerated()), id: \.offset) { index, step in
-                HStack(alignment: .top, spacing: 7) {
-                    Text(String(index + 1)).font(.system(size: 11, weight: .semibold)).foregroundStyle(accent)
-                    Text(step).font(.system(size: 12)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Text(item.evidence).font(.system(size: 11)).foregroundStyle(muted)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .center, spacing: 12) {
-                Button("打开 " + item.application.name, action: open).buttonStyle(OrangeButton())
-                Button("具体任务", action: inspect).buttonStyle(QuietButton())
-                Spacer(minLength: 0)
-                Menu("其他") {
-                    Text("仅在整个应用暂时不用时")
-                    Button(quitting ? "正在退出…" : "正常退出 " + item.application.name, action: quit).disabled(quitting)
-                }.font(.system(size: 11)).fixedSize()
-            }
-            Button(comparing ? "正在观察…" : "比较效果（先点，再调整）", action: compare)
-                .buttonStyle(QuietButton()).disabled(comparing)
-            Text(item.expected).font(.system(size: 10)).foregroundStyle(muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }.padding(14).block()
-    }
-}
-
 private struct ProcessIdentity: View {
     var reading: ProcessReading
     var showApplication: Bool
@@ -979,12 +917,15 @@ struct Sparkline: View {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private enum Surface { case compact, expanded, hidden }
 
     let monitor = Monitor()
     let privacy = PrivacyMonitor()
     let ui = Interface()
+    let orbMotion = OrbMotion()
+    let updates = SoftwareUpdate()
     private var window: NSWindow!
     private var orb: OrbPanel!
     private var status: NSStatusItem!
@@ -992,6 +933,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var visibilityItem: NSMenuItem!
     private var surface: Surface = .compact
     private var menuObservation: AnyCancellable?
+    private var updateObservation: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setUpDashboard()
@@ -999,6 +941,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setUpMenu()
         monitor.start()
         privacy.start()
+        updates.start()
         if CommandLine.arguments.contains("--privacy") { ui.page = .privacy; showDashboard() }
         else if CommandLine.arguments.contains("--dashboard") { ui.page = .metrics; showDashboard() }
         else { showOrb() }
@@ -1016,7 +959,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.contentMinSize = NSSize(width: 505, height: 592)
         window.delegate = self
-        let host = NSHostingView(rootView: PanelRoot(monitor: monitor, privacy: privacy, ui: ui))
+        let host = NSHostingView(rootView: PanelRoot(monitor: monitor, privacy: privacy, ui: ui, updates: updates))
+        // The window/frame constraints own sizing; dynamic content must not feed intrinsic sizes back into them.
+        host.sizingOptions = []
         let frame = NSView()
         window.contentView = frame
         host.translatesAutoresizingMaskIntoConstraints = false
@@ -1048,9 +993,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         orb.level = .floating
         orb.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         orb.isReleasedWhenClosed = false
-        orb.contentView = NSHostingView(rootView: OrbView(monitor: monitor) { [weak self] in
+        let host = NSHostingView(rootView: OrbView(monitor: monitor, motion: orbMotion) { [weak self] in
             self?.showDashboard()
         })
+        host.sizingOptions = []
+        orb.contentView = host
         orb.openDashboard = { [weak self] in self?.showDashboard() }
         orb.didMoveOrb = { point in
             UserDefaults.standard.set(NSStringFromPoint(point), forKey: "orbOrigin")
@@ -1077,14 +1024,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         add("摄像头与麦克风", #selector(showPrivacy))
         add("看板置顶 / 取消置顶", #selector(togglePin))
         menu.addItem(.separator())
+        let downloadItem = add("查看更新", #selector(openSoftwareUpdate))
+        downloadItem.isHidden = true
+        let checkItem = add("检查更新…", #selector(checkSoftwareUpdate))
+        menu.addItem(.separator())
         add("退出 Mac 脉搏", #selector(quit), "q")
         status.menu = menu
         menuObservation = monitor.$samples.sink { [weak self] samples in
-            guard let self, let current = samples.last, let button = self.status.button else { return }
-            let text = current.temperature.map { degrees($0) } ?? "热压 " + current.thermalLabel
-            button.title = text
+            guard let self else { return }
+            self.refreshStatus(samples.last, update: self.updates.state)
+        }
+        updateObservation = updates.$state.sink { [weak self] state in
+            guard let self else { return }
+            self.status.button?.image = NSImage(
+                systemSymbolName: state.release == nil ? "waveform.path.ecg" : "arrow.down.circle.fill",
+                accessibilityDescription: "Mac 脉搏"
+            )
+            downloadItem.isHidden = state.release == nil
+            if let release = state.release { downloadItem.title = "查看 \(release.version) 更新…" }
+            switch state {
+            case .ready, .available: checkItem.title = "检查更新…"
+            case .checking: checkItem.title = "正在检查更新…"
+            case .current: checkItem.title = "已是最新版 · 再检查"
+            case .unavailable: checkItem.title = "检查未完成 · 重试"
+            }
+            self.refreshStatus(self.monitor.samples.last, update: state)
+        }
+    }
+
+    private func refreshStatus(_ current: Sample?, update: SoftwareUpdate.State) {
+        guard let button = status.button else { return }
+        let temperature = current.map { sample in
+            sample.temperature.map { degrees($0) } ?? "热压 " + sample.thermalLabel
+        } ?? ""
+        button.title = update.release == nil ? temperature : "有更新"
+        if let release = update.release {
+            button.toolTip = "Mac 脉搏 \(release.version) 可更新"
+        } else if let current {
             button.toolTip = "Mac 脉搏 · CPU \(percent(current.cpu)) · 内存：\(Metric.memory.value(current)) · 热压力\(current.thermalLabel)"
         }
+    }
+
+    @objc private func checkSoftwareUpdate() { updates.check() }
+
+    @objc private func openSoftwareUpdate() {
+        guard let release = updates.state.release else { return }
+        NSWorkspace.shared.open(release.url)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -1117,6 +1102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showOrb()
         } else {
             surface = .hidden
+            orbMotion.active = false
             window.orderOut(nil)
             orb.orderOut(nil)
             updateMenu()
@@ -1132,6 +1118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showOrb() {
         surface = .compact
+        orbMotion.active = true
         window.orderOut(nil)
         orb.orderFrontRegardless()
         updateMenu()
@@ -1145,6 +1132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.setFrameOrigin(fitOrigin(origin, for: size, within: visible.insetBy(dx: 8, dy: 8)))
         }
         surface = .expanded
+        orbMotion.active = false
         orb.orderOut(nil)
         if window.isMiniaturized { window.deminiaturize(nil) }
         NSApp.activate(ignoringOtherApps: true)

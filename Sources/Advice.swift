@@ -23,6 +23,13 @@ enum Advice {
         "WindowServer", "ControlCenter", "NotificationCenter", "活动监视器", "Activity Monitor"
     ])
     private enum AppKind { case browser, agent, wechat, feishu, other }
+    static func applications(_ samples: [Sample], metric: Metric = .memory) -> [Load] {
+        Array((samples.last?.sources ?? []).filter {
+            $0.isApplication == true && !excluded.contains($0.name)
+        }.sorted {
+            $0.value(metric) == $1.value(metric) ? $0.id < $1.id : $0.value(metric) > $1.value(metric)
+        }.prefix(8))
+    }
     private static func kind(_ name: String) -> AppKind {
         let name = name.lowercased()
         if ["wechat", "微信"].contains(where: { name.contains($0) }) { return .wechat }
@@ -129,7 +136,7 @@ enum Advice {
                 actions.insert("如果不需要手机收音，在应用的音频设置中把输入设备切回 Mac 内置麦克风；这里只提示，不自动修改设备。", at: 0)
             }
             let expected = needsMemory
-                ? "一次只调整一项，点击「比较效果」观察 30 秒内的占用、交换速率与热压力；释放量以实测为准。"
+                ? "点「任务」查看具体负担；确定暂时不用时可直接关闭。关闭后占用随下一轮采样刷新。"
                 : "当前未检测到内存压力升高，可按需调整。关闭窗口是否释放内存取决于应用，随后比较实际读数。"
             result.append(Optimization(application: app, metric: metric, title: title, evidence: evidence,
                                        action: actions.joined(separator: "\n"), expected: expected, priority: priority))

@@ -18,6 +18,8 @@ struct Load: Identifiable, Codable {
     var write: Double = 0
     var members: Int = 0
     var isApplication: Bool?
+    var applicationPID: Int32?
+    var applicationBirth: UInt64?
 
     func value(_ metric: Metric) -> Double {
         switch metric { case .cpu, .heat: cpu; case .memory: memory; case .disk: read + write }
@@ -155,6 +157,7 @@ final class Sampler {
         var taskType: String?
         var taskService: String?
         var rendererID: String?
+        var isMain = false
     }
     private var labels = [Int32: ProcessLabel]()
     private(set) var processesByGroup = [String: [ProcessReading]]()
@@ -254,6 +257,7 @@ final class Sampler {
             let main = labels[p.pid]?.app == true &&
                 (Bundle(path: labels[p.pid]!.key)?.object(forInfoDictionaryKey: "CFBundleExecutable") as? String) == executable
             labels[p.pid]?.taskType = type ?? (main ? "app-main" : nil)
+            labels[p.pid]?.isMain = main
             let service = flag(task.service), renderer = flag(task.renderer)
             labels[p.pid]?.taskService = service
             labels[p.pid]?.rendererID = renderer
@@ -291,6 +295,10 @@ final class Sampler {
             var load = grouped[id] ?? Load(id: id, name: label.name)
             load.isApplication = label.app && !label.key.hasPrefix("/System/") && !label.key.hasPrefix("/usr/")
             if load.isApplication == true { applicationPaths[id] = label.key }
+            if ownLabel.isMain && ownLabel.key == label.key {
+                load.applicationPID = p.pid
+                load.applicationBirth = p.start
+            }
             load.members += 1
             load.cpu += cpu ?? 0
             load.memory += reading.memory
