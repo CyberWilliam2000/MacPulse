@@ -6,10 +6,17 @@ private final class TestQuitApplication: QuitApplication {
     var isTerminated = false
     var acceptsQuit = true
     var requests = 0
+    var forceRequests = 0
+    var acceptsForce = true
 
     init(path: String, pid: pid_t) {
         bundleURL = URL(fileURLWithPath: path)
         processIdentifier = pid
+    }
+
+    func forceTerminate() -> Bool {
+        forceRequests += 1
+        return acceptsForce
     }
 
     func terminate() -> Bool {
@@ -59,5 +66,40 @@ func verifyApplicationActions() {
     let selfGuard = ApplicationActions(runningApplications: { [own] })
     selfGuard.quit(example, path: "/Applications/Example.app", fresh: true)
     precondition(own.requests == 0)
-    print("Application exit checks passed (exact target, pending, cancel, stale and duplicate requests).")
+    let forceOld = TestQuitApplication(path: "/Applications/WeChat 3.8.10.app", pid: 401)
+    let forceNew = TestQuitApplication(path: "/Applications/WeChat.app", pid: 402)
+    let force = ApplicationActions(runningApplications: { [forceOld, forceNew] }, processBirth: { _ in 900 })
+    var identified = Load(id: "force-old", name: "Old WeChat", isApplication: true, applicationPID: 401, applicationBirth: 900)
+    force.forceQuit(identified, path: "/Applications/WeChat 3.8.10.app", fresh: true)
+    precondition(forceOld.forceRequests == 1 && forceOld.requests == 0 && forceNew.forceRequests == 0)
+    precondition(force.pendingIDs.contains(identified.id) && force.message?.contains("已关闭") == false)
+    force.forceQuit(identified, path: "/Applications/WeChat 3.8.10.app", fresh: true)
+    precondition(forceOld.forceRequests == 1)
+    forceOld.isTerminated = true
+    force.checkPending()
+    precondition(force.pendingIDs.isEmpty && force.message?.contains("已关闭") == true)
+
+    identified.applicationPID = 402
+    let identityGuard = ApplicationActions(runningApplications: { [forceNew] }, processBirth: { _ in 901 })
+    identityGuard.forceQuit(identified, path: "/Applications/WeChat.app", fresh: true)
+    precondition(forceNew.forceRequests == 0, "A reused PID or restarted application cannot be force-quit from an old row.")
+    identified.applicationBirth = nil
+    force.forceQuit(identified, path: "/Applications/WeChat.app", fresh: true)
+    precondition(forceNew.forceRequests == 0)
+    identified.applicationBirth = 900
+    force.forceQuit(identified, path: "/Applications/WeChat.app", fresh: false)
+    force.forceQuit(identified, path: "/System/Applications/WeChat.app", fresh: true)
+    precondition(forceNew.forceRequests == 0)
+    forceNew.acceptsForce = false
+    force.forceQuit(identified, path: "/Applications/WeChat.app", fresh: true)
+    precondition(force.pendingIDs.isEmpty && force.message?.contains("未送达") == true)
+    forceNew.acceptsForce = true
+    force.forceQuit(identified, path: "/Applications/WeChat.app", fresh: true)
+    force.checkPending(now: Date().addingTimeInterval(9))
+    precondition(force.message?.contains("未完成") == true && force.message?.contains("已关闭") == false)
+    let forceSelf = ApplicationActions(runningApplications: { [own] }, processBirth: { _ in 900 })
+    var selfLoad = example; selfLoad.applicationPID = getpid(); selfLoad.applicationBirth = 900
+    forceSelf.forceQuit(selfLoad, path: "/Applications/Example.app", fresh: true)
+    precondition(own.forceRequests == 0)
+    print("Application actions passed (normal/force, exact instance, PID birth, completion, timeout, stale, self/system, duplicate requests).")
 }

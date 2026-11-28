@@ -22,22 +22,14 @@ func verifyGentleAdvice() {
     precondition(matched[0].action.contains("输入设备切回") && matched[0].evidence.contains("同一进程"))
     let reused = MicrophoneHint(pid: 50, birth: 41, device: "iPhone 麦克风")
     precondition(!Advice.suggestions([sample], processes: ["fs": [process]], microphones: [reused])[0].action.contains("输入设备切回"))
-    let check = AdjustmentCheck()
-    let start = sample.id
-    check.begin(sample.sources[0], samples: [sample], now: start)
-    precondition(check.current != nil)
-    var period = [Sample]()
-    for second in stride(from: 0, through: 30, by: 3) {
-        var point = sample; point.id = start.addingTimeInterval(Double(second))
-        point.sources[0].memory = giB
-        period.append(point)
-    }
-    check.accept(period)
-    precondition(check.current == nil && check.message?.contains("减少") == true && check.message?.contains("其他任务") == true)
-    check.begin(sample.sources[0], samples: [sample], now: start)
-    check.accept([sample, period.last!])
-    precondition(check.message?.contains("中断") == true)
-    check.begin(sample.sources[0], samples: [sample], now: start.addingTimeInterval(60))
-    precondition(check.current == nil && check.message?.contains("最新采样") == true)
-    print("Gentle advice checks passed (keep essential apps, concrete steps, microphone identity, before/after, gaps, stale samples).")
+    precondition(advice.allSatisfy { !$0.expected.contains("比较效果") })
+    sample.sources.append(Load(id: "self", name: "Mac 脉搏", memory: 20 * giB, isApplication: true))
+    precondition(!Advice.applications([sample]).contains { $0.id == "self" })
+    var stable = StableApplicationOrder()
+    stable.reconcile(["one", "two"])
+    stable.reconcile(["two", "one"])
+    precondition(stable.ids == ["one", "two"], "Refresh must not swap force-close targets under the pointer.")
+    stable.reconcile(["two", "three"])
+    precondition(stable.ids == ["two", "three"])
+    print("Advice/list checks passed (direct inspection, optional steps, microphone identity, stable row order).")
 }
