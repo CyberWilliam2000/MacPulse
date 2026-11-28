@@ -15,8 +15,8 @@ cat > "$stage/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key><string>Mac 脉搏</string>
     <key>CFBundleName</key><string>Mac 脉搏</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.8.0</string>
-    <key>CFBundleVersion</key><string>12</string>
+    <key>CFBundleShortVersionString</key><string>0.9.2</string>
+    <key>CFBundleVersion</key><string>15</string>
     <key>CFBundleIconFile</key><string>MacPulse</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
@@ -27,7 +27,7 @@ PLIST
 xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra -c Sources/Probe.c -o "$build/Probe.o"
 xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra -c Sources/PrivacyProbe.c -o "$build/PrivacyProbe.o"
 xcrun clang -mmacosx-version-min=14.0 -O2 -Wall -Wextra -c Sources/TaskProbe.c -o "$build/TaskProbe.o"
-xcrun swiftc -target arm64-apple-macos14 -O -module-cache-path "$build/module-cache" -import-objc-header Sources/Probe.h Sources/Monitor.swift Sources/ProcessTasks.swift Sources/Diagnosis.swift Sources/Advice.swift Sources/AdjustmentCheck.swift Sources/Orb.swift Sources/ApplicationActions.swift Sources/Privacy.swift Sources/PrivacyView.swift Sources/App.swift "$build/Probe.o" "$build/PrivacyProbe.o" "$build/TaskProbe.o" -framework IOKit -framework CoreAudio -framework CoreMediaIO -o "$stage/Contents/MacOS/MacPulse"
+xcrun swiftc -target arm64-apple-macos14 -O -module-cache-path "$build/module-cache" -import-objc-header Sources/Probe.h Sources/Monitor.swift Sources/ProcessTasks.swift Sources/Diagnosis.swift Sources/Advice.swift Sources/Orb.swift Sources/SoftwareUpdate.swift Sources/ApplicationActions.swift Sources/ApplicationList.swift Sources/Privacy.swift Sources/PrivacyView.swift Sources/App.swift "$build/Probe.o" "$build/PrivacyProbe.o" "$build/TaskProbe.o" -framework IOKit -framework CoreAudio -framework CoreMediaIO -o "$stage/Contents/MacOS/MacPulse"
 xcrun swiftc -target arm64-apple-macos14 -module-cache-path "$build/module-cache" tools/Icon.swift -o "$build/MakeIcon"
 "$build/MakeIcon" "$stage/Contents/Resources/MacPulse.icns"
 plutil -lint "$stage/Contents/Info.plist"
